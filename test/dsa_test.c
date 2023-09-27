@@ -830,9 +830,11 @@ static struct evl_desc_list *parse_evl_desc(char *s, int nr_desc)
 	return edl;
 }
 
+#define MAX_NUM_DEVICES 2
+
 int main(int argc, char *argv[])
 {
-	struct acctest_context *dsa;
+	struct acctest_context *dsa[MAX_NUM_DEVICES];
 	int rc = 0;
 	unsigned long buf_size = DSA_TEST_SIZE;
 	int wq_type = SHARED;
@@ -848,8 +850,10 @@ int main(int argc, char *argv[])
 	unsigned int num_desc = 1;
 	struct evl_desc_list *edl = NULL;
 	char *edl_str = NULL;
+	int num_devices = 1;
+	int i = 0;
 
-	while ((opt = getopt(argc, argv, "e:w:l:f:o:b:c:d:n:t:p:vh")) != -1) {
+	while ((opt = getopt(argc, argv, "e:w:l:f:o:b:c:d:n:t:p:m:vh")) != -1) {
 		switch (opt) {
 		case 'e':
 			edl_str = optarg;
@@ -886,6 +890,14 @@ int main(int argc, char *argv[])
 		case 't':
 			ms_timeout = strtoul(optarg, NULL, 0);
 			break;
+		case 'm':
+			num_devices = strtoul(optarg, NULL, 0);
+			if (num_devices > MAX_NUM_DEVICES) {
+				err("invalid num of devices\n");
+				return -EINVAL;
+			}
+			break;
+
 		case 'v':
 			debug_logging = 1;
 			break;
@@ -897,90 +909,95 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	dsa = acctest_init(tflags);
-	dsa->dev_type = ACCFG_DEVICE_DSA;
+	for(i = 0; i < num_devices; i++) {
+		dsa[i] = acctest_init(tflags);
+		dsa[i]->dev_type = ACCFG_DEVICE_DSA;
 
-	if (!dsa)
-		return -ENOMEM;
+		if (!dsa[i])
+			return -ENOMEM;
 
-	if (edl_str && opcode == 1) {
-		edl = parse_evl_desc(edl_str, bsize);
-		if (!edl)
-			return -EINVAL;
-		dsa->is_evl_test = 1;
-	}
-
-	rc = acctest_alloc(dsa, wq_type, dev_id, wq_id);
-	if (rc < 0)
-		return -ENOMEM;
-
-	if (buf_size > dsa->max_xfer_size) {
-		err("invalid transfer size: %lu\n", buf_size);
-		return -EINVAL;
-	}
-
-	switch (opcode) {
-	case DSA_OPCODE_NOOP:
-		rc = test_noop(dsa, tflags, num_desc);
-		if (rc != ACCTEST_STATUS_OK)
-			goto error;
-		break;
-
-	case DSA_OPCODE_BATCH:
-		if (bsize > dsa->max_batch_size || bsize < 2) {
-			err("invalid num descs: %d\n", bsize);
-			rc = -EINVAL;
-			goto error;
+		if (edl_str && opcode == 1) {
+			edl = parse_evl_desc(edl_str, bsize);
+			if (!edl)
+				return -EINVAL;
+			dsa[i]->is_evl_test = 1;
 		}
-		rc = test_batch(dsa, edl, buf_size, tflags, bopcode, bsize, num_desc);
+
+		rc = acctest_alloc(dsa[i], wq_type, dev_id, wq_id);
 		if (rc < 0)
-			goto error;
-		break;
+			return -ENOMEM;
 
-	case DSA_OPCODE_DRAIN:
-	case DSA_OPCODE_MEMMOVE:
-	case DSA_OPCODE_MEMFILL:
-	case DSA_OPCODE_COMPARE:
-	case DSA_OPCODE_COMPVAL:
-	case DSA_OPCODE_DUALCAST:
-	case DSA_OPCODE_TRANSL_FETCH:
-	case DSA_OPCODE_CFLUSH:
-		rc = test_memory(dsa, buf_size, tflags, opcode, num_desc);
-		if (rc != ACCTEST_STATUS_OK)
-			goto error;
-		break;
+		if (buf_size > dsa[i]->max_xfer_size) {
+			err("invalid transfer size: %lu\n", buf_size);
+			return -EINVAL;
+		}
 
-	case DSA_OPCODE_CR_DELTA:
-	case DSA_OPCODE_AP_DELTA:
-		rc = test_delta(dsa, buf_size, tflags, opcode, num_desc);
-		if (rc != ACCTEST_STATUS_OK)
-			goto error;
-		break;
+		switch (opcode) {
+		case DSA_OPCODE_NOOP:
+			rc = test_noop(dsa[i], tflags, num_desc);
+			if (rc != ACCTEST_STATUS_OK)
+				goto error;
+			break;
 
-	case DSA_OPCODE_CRCGEN:
-	case DSA_OPCODE_COPY_CRC:
-		rc = test_crc(dsa, buf_size, tflags, opcode, num_desc);
-		if (rc != ACCTEST_STATUS_OK)
-			goto error;
-		break;
+		case DSA_OPCODE_BATCH:
+			if (bsize > dsa[i]->max_batch_size || bsize < 2) {
+				err("invalid num descs: %d\n", bsize);
+				rc = -EINVAL;
+				goto error;
+			}
+			rc = test_batch(dsa[i], edl, buf_size, tflags, bopcode, bsize, num_desc);
+			if (rc < 0)
+				goto error;
+			break;
 
-	case DSA_OPCODE_DIF_CHECK:
-	case DSA_OPCODE_DIF_INS:
-	case DSA_OPCODE_DIF_STRP:
-	case DSA_OPCODE_DIF_UPDT:
-	case DSA_OPCODE_DIX_GEN:
-		rc = test_dif(dsa, buf_size, tflags, opcode, num_desc);
-		if (rc != ACCTEST_STATUS_OK)
-			goto error;
-		break;
+		case DSA_OPCODE_DRAIN:
+		case DSA_OPCODE_MEMMOVE:
+		case DSA_OPCODE_MEMFILL:
+		case DSA_OPCODE_COMPARE:
+		case DSA_OPCODE_COMPVAL:
+		case DSA_OPCODE_DUALCAST:
+		case DSA_OPCODE_TRANSL_FETCH:
+		case DSA_OPCODE_CFLUSH:
+			rc = test_memory(dsa[i], buf_size, tflags, opcode, num_desc);
+			if (rc != ACCTEST_STATUS_OK)
+				goto error;
+			break;
 
-	default:
-		rc = -EINVAL;
-		break;
+		case DSA_OPCODE_CR_DELTA:
+		case DSA_OPCODE_AP_DELTA:
+			rc = test_delta(dsa[i], buf_size, tflags, opcode, num_desc);
+			if (rc != ACCTEST_STATUS_OK)
+				goto error;
+			break;
+
+		case DSA_OPCODE_CRCGEN:
+		case DSA_OPCODE_COPY_CRC:
+			rc = test_crc(dsa[i], buf_size, tflags, opcode, num_desc);
+			if (rc != ACCTEST_STATUS_OK)
+				goto error;
+			break;
+
+		case DSA_OPCODE_DIF_CHECK:
+		case DSA_OPCODE_DIF_INS:
+		case DSA_OPCODE_DIF_STRP:
+		case DSA_OPCODE_DIF_UPDT:
+		case DSA_OPCODE_DIX_GEN:
+			rc = test_dif(dsa[i], buf_size, tflags, opcode, num_desc);
+			if (rc != ACCTEST_STATUS_OK)
+				goto error;
+			break;
+
+		default:
+			rc = -EINVAL;
+			break;
+		}
+
+		dev_id = 2;	/* Hack on spr_tdx */
 	}
 
  error:
 	free(edl);
-	acctest_free(dsa);
+	for(i = 0; i < num_devices; i++)
+		acctest_free(dsa[i]);
 	return rc;
 }
