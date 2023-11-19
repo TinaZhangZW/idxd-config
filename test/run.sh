@@ -1,0 +1,2 @@
+./dsa_test -w1 -f0x1 -l2097152 -o0x3 -m0x2 -v
+#./dsa_test -w1 -f0x1 -l2097152 -o0x3 -v
